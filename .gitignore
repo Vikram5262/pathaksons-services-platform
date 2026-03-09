@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+.next/
+out/
+
+# Environment variables
+.env.local
+.env*.local
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+
+# Misc
+*.log
+*.tsbuildinfo
