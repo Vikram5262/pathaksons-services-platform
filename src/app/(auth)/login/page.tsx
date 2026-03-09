@@ -230,7 +230,7 @@ export default function LoginPage() {
 
                     <div style={{ marginTop: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                         Don&apos;t have an account?{' '}
-                        <Link href="/signup" style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>Join QAVRA</Link>
+                        <Link href="/signup" style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>Join Us</Link>
                     </div>
                 </div>
 

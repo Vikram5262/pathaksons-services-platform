@@ -56,7 +56,7 @@ export default function AdminDashboard() {
                 <div className="content-area">
                     <div style={{ marginBottom: 32 }}>
                         <h1 className="font-display" style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--text-primary)' }}>Admin Dashboard</h1>
-                        <p style={{ color: 'var(--text-secondary)', marginTop: 4 }}>QAVRA Platform Overview</p>
+                        <p style={{ color: 'var(--text-secondary)', marginTop: 4 }}>Platform Overview</p>
                     </div>
 
                     {/* Alerts */}

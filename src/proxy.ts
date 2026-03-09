@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Protected admin routes
+// Protected routes
 const ADMIN_PATHS = ['/admin'];
-// Protected customer routes  
 const CUSTOMER_PATHS = ['/customer'];
-// Protected provider routes
 const PROVIDER_PATHS = ['/provider'];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
     // Check if it's a protected route

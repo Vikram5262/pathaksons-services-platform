@@ -13,7 +13,7 @@ const TIME_SLOTS = ['8:00 AM – 10:00 AM', '10:00 AM – 12:00 PM', '12:00 PM �
 const METHODS = [
     { id: 'upi', label: 'UPI', icon: '📱', desc: 'Google Pay, PhonePe, Paytm' },
     { id: 'card', label: 'Card', icon: '💳', desc: 'Debit / Credit Card' },
-    { id: 'wallet', label: 'Wallet', icon: '👛', desc: 'QAVRA Wallet' },
+    { id: 'wallet', label: 'Wallet', icon: '👛', desc: 'Pathak & Sons Wallet' },
 ];
 
 function BookingForm() {

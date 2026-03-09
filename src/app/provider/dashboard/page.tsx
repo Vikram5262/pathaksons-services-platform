@@ -40,21 +40,40 @@ export default function ProviderDashboard() {
         <span key={i} style={{ color: i < Math.round(r) ? '#F59E0B' : 'var(--bg-border)', fontSize: '0.9rem' }}>★</span>
     ));
 
-    if (!provider) {
+    if (!provider || provider.overallStatus === 'pending' || provider.overallStatus === 'rejected') {
         return (
             <div className="layout-with-sidebar">
                 <Sidebar role="provider" />
                 <main className="main-content">
                     <div className="content-area" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
-                        <div style={{ textAlign: 'center', maxWidth: 420 }}>
-                            <div style={{ fontSize: '3rem', marginBottom: 16 }}>⏳</div>
-                            <h2 style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Verification Pending</h2>
-                            <p style={{ color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.7 }}>
-                                Your application is under review. An admin will approve your profile within 24 hours. You'll be notified once verified.
-                            </p>
-                            <div className="badge badge-warning" style={{ fontSize: '0.8rem', padding: '6px 14px' }}>
-                                <Clock size={12} /> Awaiting Admin Approval
-                            </div>
+                        <div style={{ textAlign: 'center', maxWidth: 440 }}>
+                            {provider?.overallStatus === 'rejected' ? (
+                                <>
+                                    <div style={{ fontSize: '3rem', marginBottom: 16 }}>❌</div>
+                                    <h2 style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Application Rejected</h2>
+                                    {provider.rejectionReason && (
+                                        <div style={{ padding: '14px 18px', background: 'rgba(239,68,68,0.08)', border: '1.5px solid rgba(239,68,68,0.2)', borderRadius: 12, marginBottom: 20, textAlign: 'left' }}>
+                                            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#EF4444', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Rejection Reason</div>
+                                            <div style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{provider.rejectionReason}</div>
+                                        </div>
+                                    )}
+                                    <p style={{ color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.7 }}>
+                                        Please re-upload correct documents and contact support to resubmit your application.
+                                    </p>
+                                    <div className="badge badge-danger" style={{ fontSize: '0.8rem', padding: '6px 14px' }}>Application Rejected</div>
+                                </>
+                            ) : (
+                                <>
+                                    <div style={{ fontSize: '3rem', marginBottom: 16 }}>⏳</div>
+                                    <h2 style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Verification Pending</h2>
+                                    <p style={{ color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.7 }}>
+                                        Your application is under review. An admin will approve your profile within 24 hours. You'll be notified once verified.
+                                    </p>
+                                    <div className="badge badge-warning" style={{ fontSize: '0.8rem', padding: '6px 14px' }}>
+                                        <Clock size={12} /> Awaiting Admin Approval
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </main>
@@ -69,7 +88,11 @@ export default function ProviderDashboard() {
                 <div className="content-area">
                     {/* Header */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 32 }}>
-                        <div className="avatar avatar-lg">{user.name.charAt(0)}</div>
+                        {provider.profilePhoto ? (
+                            <img src={provider.profilePhoto} alt={user.name} style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: '3px solid var(--bg-border)', flexShrink: 0 }} />
+                        ) : (
+                            <div className="avatar avatar-lg">{user.name.charAt(0)}</div>
+                        )}
                         <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                 <h1 className="font-display" style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>

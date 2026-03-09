@@ -192,7 +192,7 @@ export default function SignupPage() {
         const res = await signup({ name, phone, email: email || undefined, username: username.trim(), role: 'customer', city, address, password });
         setLoading(false);
         if (!res.success) { toast.error(res.error!); return; }
-        toast.success('Account created! Welcome to QAVRA 🎉');
+        toast.success('Account created! Welcome to Pathak & Sons 🎉');
         router.push('/customer/dashboard');
     };
 
@@ -630,7 +630,7 @@ export default function SignupPage() {
                                             By registering as a provider on QAVRA, you acknowledge and agree that:
                                         </div>
                                         <ul style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.8, margin: '8px 0 0 16px' }}>
-                                            <li>You are an <strong>independent contractor</strong>, not an employee of QAVRA.</li>
+                                            <li>You are an <strong>independent contractor</strong>, not an independent contractor.</li>
                                             <li>You are solely <strong>responsible for any service damage or misconduct</strong> during jobs.</li>
                                             <li>QAVRA is a <strong>marketplace platform only</strong> and is not liable for provider negligence.</li>
                                             <li>You must comply with all applicable laws and safety standards.</li>

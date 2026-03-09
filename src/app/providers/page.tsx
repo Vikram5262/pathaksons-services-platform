@@ -141,7 +141,11 @@ function ProvidersList() {
                                 <Link key={p.id} href={`/providers/${p.id}`} style={{ textDecoration: 'none' }}>
                                     <div className="provider-card">
                                         <div style={{ padding: '20px 20px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'linear-gradient(135deg, #EFF6FF, #F5F3FF)' }}>
-                                            <div className="avatar avatar-lg" style={{ marginBottom: 10 }}>{p.name.charAt(0)}</div>
+                                            {p.profilePhoto ? (
+                                                <img src={p.profilePhoto} alt={p.name} style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '3px solid #fff', marginBottom: 10, boxShadow: '0 2px 12px rgba(0,0,0,0.12)' }} />
+                                            ) : (
+                                                <div className="avatar avatar-lg" style={{ marginBottom: 10 }}>{p.name.charAt(0)}</div>
+                                            )}
                                             <div className="badge badge-success" style={{ fontSize: '0.6rem' }}><CheckCircle size={8} /> Verified</div>
                                         </div>
                                         <div className="provider-card-body">

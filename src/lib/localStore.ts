@@ -53,6 +53,8 @@ export interface Provider {
     longitude?: number;
     // AI Matching
     avgResponseTimeMin?: number;  // average response time in minutes
+    // Rejection
+    rejectionReason?: string;     // set by admin when rejecting
 }
 
 export interface Booking {
