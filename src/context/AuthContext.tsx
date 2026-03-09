@@ -1,13 +1,21 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { localStore, User, UserRole } from '@/lib/localStore';
+import { localStore, User, UserRole, hashPassword, verifyPassword } from '@/lib/localStore';
 
 interface AuthContextType {
     user: User | null;
     loading: boolean;
+    // Legacy phone login (kept for compatibility)
     login: (phone: string, password: string) => Promise<{ success: boolean; error?: string }>;
+    // New: username or email + password
+    loginWithPassword: (identifier: string, password: string) => Promise<{ success: boolean; error?: string }>;
+    // New: email OTP flow
+    sendEmailOTP: (email: string) => Promise<{ success: boolean; error?: string }>;
+    verifyEmailOTP: (email: string, code: string) => Promise<{ success: boolean; error?: string }>;
+    // Admin
     loginAdmin: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+    // Signup
     signup: (data: Omit<User, 'id' | 'createdAt' | 'verificationStatus'> & { password: string }) => Promise<{ success: boolean; error?: string }>;
     logout: () => void;
     updateUser: (data: Partial<User>) => void;
@@ -15,38 +23,30 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// ─── Rate limiter — prevents spam account creation ────────────────────────────
-// Stores timestamps of signup attempts per phone prefix (first 5 digits)
-function checkSignupRateLimit(phone: string): { allowed: boolean; waitSeconds?: number } {
+// ─── Rate limiters ────────────────────────────────────────────────────────────
+function checkSignupRateLimit(): { allowed: boolean; waitSeconds?: number } {
     if (typeof window === 'undefined') return { allowed: true };
     const KEY = 'qavra_signup_attempts';
-    const WINDOW_MS = 10 * 60 * 1000; // 10 minute window
-    const MAX_ATTEMPTS = 3;           // max 3 signup attempts per 10 min from same device
-
+    const WINDOW_MS = 10 * 60 * 1000;
+    const MAX_ATTEMPTS = 3;
     try {
         const raw = localStorage.getItem(KEY);
         const attempts: number[] = raw ? JSON.parse(raw) : [];
         const now = Date.now();
-        // Filter to only attempts within the window
         const recent = attempts.filter(t => now - t < WINDOW_MS);
         if (recent.length >= MAX_ATTEMPTS) {
             const oldest = Math.min(...recent);
-            const waitSeconds = Math.ceil((WINDOW_MS - (now - oldest)) / 1000);
-            return { allowed: false, waitSeconds };
+            return { allowed: false, waitSeconds: Math.ceil((WINDOW_MS - (now - oldest)) / 1000) };
         }
-        // Record this attempt
         recent.push(now);
         localStorage.setItem(KEY, JSON.stringify(recent));
         return { allowed: true };
-    } catch {
-        return { allowed: true };
-    }
+    } catch { return { allowed: true }; }
 }
 
-// ─── Failed login rate limit — 5 attempts per 5 minutes per phone ─────────────
-function checkLoginRateLimit(phone: string): { allowed: boolean; waitSeconds?: number } {
+function checkLoginRateLimit(key: string): { allowed: boolean; waitSeconds?: number } {
     if (typeof window === 'undefined') return { allowed: true };
-    const KEY = `qavra_login_fail_${phone}`;
+    const KEY = `qavra_login_fail_${key}`;
     const WINDOW_MS = 5 * 60 * 1000;
     const MAX_FAILS = 5;
     try {
@@ -56,19 +56,15 @@ function checkLoginRateLimit(phone: string): { allowed: boolean; waitSeconds?: n
         const recent = fails.filter(t => now - t < WINDOW_MS);
         if (recent.length >= MAX_FAILS) {
             const oldest = Math.min(...recent);
-            const waitSeconds = Math.ceil((WINDOW_MS - (now - oldest)) / 1000);
-            return { allowed: false, waitSeconds };
+            return { allowed: false, waitSeconds: Math.ceil((WINDOW_MS - (now - oldest)) / 1000) };
         }
-        // Record this failed attempt (will be called only on failure)
         return { allowed: true };
-    } catch {
-        return { allowed: true };
-    }
+    } catch { return { allowed: true }; }
 }
 
-function recordLoginFailure(phone: string) {
+function recordLoginFailure(key: string) {
     if (typeof window === 'undefined') return;
-    const KEY = `qavra_login_fail_${phone}`;
+    const KEY = `qavra_login_fail_${key}`;
     try {
         const raw = localStorage.getItem(KEY);
         const fails: number[] = raw ? JSON.parse(raw) : [];
@@ -77,9 +73,15 @@ function recordLoginFailure(phone: string) {
     } catch { /* noop */ }
 }
 
-function clearLoginFailures(phone: string) {
+function clearLoginFailures(key: string) {
     if (typeof window === 'undefined') return;
-    localStorage.removeItem(`qavra_login_fail_${phone}`);
+    localStorage.removeItem(`qavra_login_fail_${key}`);
+}
+
+function resolveRedirect(user: User): string {
+    if (user.role === 'admin') return '/admin/dashboard';
+    if (user.role === 'provider') return '/provider/dashboard';
+    return '/customer/dashboard';
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -93,87 +95,123 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
     }, []);
 
+    // ─── Phone login (legacy) ──────────────────────────────────────────────────
     const login = async (phone: string, _password: string): Promise<{ success: boolean; error?: string }> => {
-        // Rate limit check
         const rateCheck = checkLoginRateLimit(phone);
-        if (!rateCheck.allowed) {
-            return { success: false, error: `Too many failed attempts. Try again in ${Math.ceil((rateCheck.waitSeconds || 60) / 60)} minute(s).` };
-        }
+        if (!rateCheck.allowed) return { success: false, error: `Too many attempts. Wait ${Math.ceil((rateCheck.waitSeconds || 60) / 60)} min.` };
         const found = localStore.users.getByPhone(phone);
-        if (!found) {
-            recordLoginFailure(phone);
-            return { success: false, error: 'No account found with this phone number.' };
-        }
-        if (found.verificationStatus === 'blacklisted') {
-            recordLoginFailure(phone);
-            return { success: false, error: 'Account has been banned from the platform.' };
-        }
-        if (found.verificationStatus === 'suspended') {
-            return { success: false, error: 'Account has been suspended. Contact support.' };
-        }
+        if (!found) { recordLoginFailure(phone); return { success: false, error: 'No account with this phone number.' }; }
+        if (found.verificationStatus === 'blacklisted') return { success: false, error: 'Account banned from platform.' };
+        if (found.verificationStatus === 'suspended') return { success: false, error: 'Account suspended. Contact support.' };
         clearLoginFailures(phone);
         localStore.session.set(found);
         setUser(found);
         return { success: true };
     };
 
-    const loginAdmin = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
-        if (email === 'admin@qavra.com' && password === 'admin@123') {
-            const admin = localStore.users.getByEmail('admin@qavra.com');
-            if (admin) {
-                localStore.session.set(admin);
-                setUser(admin);
-                return { success: true };
-            }
-        }
-        return { success: false, error: 'Invalid admin credentials.' };
-    };
+    // ─── Username/email + password login ──────────────────────────────────────
+    const loginWithPassword = async (identifier: string, password: string): Promise<{ success: boolean; error?: string }> => {
+        const rateKey = identifier.toLowerCase();
+        const rateCheck = checkLoginRateLimit(rateKey);
+        if (!rateCheck.allowed) return { success: false, error: `Too many failed attempts. Wait ${Math.ceil((rateCheck.waitSeconds || 60) / 60)} min.` };
 
-    const signup = async (data: Omit<User, 'id' | 'createdAt' | 'verificationStatus'> & { password: string }): Promise<{ success: boolean; error?: string }> => {
-        // Phone uniqueness check
-        const existing = localStore.users.getByPhone(data.phone);
-        if (existing) return { success: false, error: 'Phone number already registered. Please log in instead.' };
+        // Find by email or username
+        const found = localStore.users.getByEmail(identifier) || localStore.users.getByUsername(identifier);
+        if (!found) { recordLoginFailure(rateKey); return { success: false, error: 'No account found with this email or username.' }; }
+        if (found.verificationStatus === 'blacklisted') return { success: false, error: 'Account banned from platform.' };
+        if (found.verificationStatus === 'suspended') return { success: false, error: 'Account suspended. Contact support.' };
 
-        // Email uniqueness check (if email provided)
-        if (data.email) {
-            const existingEmail = localStore.users.getByEmail(data.email);
-            if (existingEmail) return { success: false, error: 'Email address already registered.' };
-        }
+        // Verify password
+        if (!found.passwordHash) { recordLoginFailure(rateKey); return { success: false, error: 'This account does not have a password set. Use phone login.' }; }
+        if (!verifyPassword(password, found.passwordHash)) { recordLoginFailure(rateKey); return { success: false, error: 'Incorrect password.' }; }
 
-        // Spam prevention — rate limit account creation per device
-        const rateCheck = checkSignupRateLimit(data.phone);
-        if (!rateCheck.allowed) {
-            const mins = Math.ceil((rateCheck.waitSeconds || 60) / 60);
-            return { success: false, error: `Too many accounts created recently. Please wait ${mins} minute(s) before trying again.` };
-        }
-
-        // Phone format validation
-        if (!/^\d{10}$/.test(data.phone)) {
-            return { success: false, error: 'Phone number must be exactly 10 digits.' };
-        }
-
-        const { password: _, ...userData } = data;
-        const newUser = localStore.users.create({
-            ...userData,
-            verificationStatus: data.role === 'provider' ? 'pending' : 'verified',
-        });
-
-        // Auto-login for customers only; providers need admin approval first
-        if (data.role !== 'provider') {
-            localStore.session.set(newUser);
-            setUser(newUser);
-        } else {
-            // For providers: log them in with pending status so they can see their dashboard
-            localStore.session.set(newUser);
-            setUser(newUser);
-        }
+        clearLoginFailures(rateKey);
+        localStore.session.set(found);
+        setUser(found);
         return { success: true };
     };
 
-    const logout = () => {
-        localStore.session.clear();
-        setUser(null);
+    // ─── Email OTP: send ───────────────────────────────────────────────────────
+    const sendEmailOTP = async (email: string): Promise<{ success: boolean; error?: string }> => {
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { success: false, error: 'Enter a valid email address.' };
+        const rateKey = `otp_send_${email}`;
+        const rateCheck = checkLoginRateLimit(rateKey);
+        if (!rateCheck.allowed) return { success: false, error: `OTP already sent. Wait ${rateCheck.waitSeconds}s.` };
+
+        const found = localStore.users.getByEmail(email);
+        if (!found) return { success: false, error: 'No account found with this email.' };
+        if (found.verificationStatus === 'blacklisted') return { success: false, error: 'Account banned.' };
+
+        localStore.emailOTP.send(email);
+        recordLoginFailure(rateKey); // throttle re-sends
+        // In production: send real email via SendGrid/Resend
+        return { success: true };
     };
+
+    // ─── Email OTP: verify ─────────────────────────────────────────────────────
+    const verifyEmailOTP = async (email: string, code: string): Promise<{ success: boolean; error?: string }> => {
+        const found = localStore.users.getByEmail(email);
+        if (!found) return { success: false, error: 'No account found with this email.' };
+
+        const valid = localStore.emailOTP.verify(email, code);
+        if (!valid) return { success: false, error: 'Invalid or expired OTP. Try resending.' };
+
+        localStore.session.set(found);
+        setUser(found);
+        return { success: true };
+    };
+
+    // ─── Admin login ───────────────────────────────────────────────────────────
+    const loginAdmin = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+        const rateCheck = checkLoginRateLimit('admin_login');
+        if (!rateCheck.allowed) return { success: false, error: `Admin locked. Wait ${Math.ceil((rateCheck.waitSeconds || 60) / 60)} min.` };
+
+        const admin = localStore.users.getByEmail(email);
+        if (!admin || admin.role !== 'admin') { recordLoginFailure('admin_login'); return { success: false, error: 'Invalid admin credentials.' }; }
+        if (!admin.passwordHash || !verifyPassword(password, admin.passwordHash)) {
+            // Fallback to hardcoded for demo
+            if (email !== 'admin@qavra.com' || password !== 'admin@123') {
+                recordLoginFailure('admin_login');
+                return { success: false, error: 'Invalid admin credentials.' };
+            }
+        }
+        clearLoginFailures('admin_login');
+        localStore.session.set(admin);
+        setUser(admin);
+        return { success: true };
+    };
+
+    // ─── Signup ────────────────────────────────────────────────────────────────
+    const signup = async (data: Omit<User, 'id' | 'createdAt' | 'verificationStatus'> & { password: string }): Promise<{ success: boolean; error?: string }> => {
+        // Phone uniqueness
+        if (localStore.users.getByPhone(data.phone)) return { success: false, error: 'Phone number already registered. Log in instead.' };
+        // Email uniqueness
+        if (data.email && localStore.users.getByEmail(data.email)) return { success: false, error: 'Email already registered.' };
+        // Username uniqueness
+        if (data.username && localStore.users.getByUsername(data.username)) return { success: false, error: 'Username already taken.' };
+        // Rate limit
+        const rateCheck = checkSignupRateLimit();
+        if (!rateCheck.allowed) {
+            const mins = Math.ceil((rateCheck.waitSeconds || 60) / 60);
+            return { success: false, error: `Too many accounts created. Wait ${mins} min.` };
+        }
+        // Phone format
+        if (!/^\d{10}$/.test(data.phone)) return { success: false, error: 'Phone must be exactly 10 digits.' };
+        // Username format
+        if (data.username && !/^[a-zA-Z0-9_]{4,20}$/.test(data.username)) return { success: false, error: 'Username: 4-20 chars, letters/numbers/underscores only.' };
+
+        const { password, ...userData } = data;
+        const newUser = localStore.users.create({
+            ...userData,
+            passwordHash: password ? hashPassword(password) : undefined,
+            verificationStatus: data.role === 'provider' ? 'pending' : 'verified',
+        });
+        localStore.session.set(newUser);
+        setUser(newUser);
+        return { success: true };
+    };
+
+    const logout = () => { localStore.session.clear(); setUser(null); };
 
     const updateUser = (data: Partial<User>) => {
         if (!user) return;
@@ -184,7 +222,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     return (
-        <AuthContext.Provider value={{ user, loading, login, loginAdmin, signup, logout, updateUser }}>
+        <AuthContext.Provider value={{ user, loading, login, loginWithPassword, sendEmailOTP, verifyEmailOTP, loginAdmin, signup, logout, updateUser }}>
             {children}
         </AuthContext.Provider>
     );

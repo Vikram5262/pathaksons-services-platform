@@ -3,9 +3,9 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
-import { localStore, Provider, Booking } from '@/lib/localStore';
+import { localStore, Provider, Booking, AIMatchResult, PricingResult } from '@/lib/localStore';
 import { Suspense } from 'react';
-import { Check, ChevronRight, ChevronLeft, MapPin, Star, Upload, Shield, Clock } from 'lucide-react';
+import { Check, ChevronRight, ChevronLeft, MapPin, Star, Shield, Clock, Zap, Trophy } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const CATEGORIES = ['Electrician', 'Plumber', 'Cook', 'Driver', 'Daily Helper', 'Security Guard', 'Senior Care', 'Grocery Runner', 'Local Freelancer'];
@@ -25,7 +25,8 @@ function BookingForm() {
     const [serviceCategory, setServiceCategory] = useState('');
     const [description, setDescription] = useState('');
     const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
-    const [providers, setProviders] = useState<Provider[]>([]);
+    const [aiMatches, setAiMatches] = useState<AIMatchResult[]>([]);
+    const [pricing, setPricing] = useState<PricingResult | null>(null);
     const [timeSlot, setTimeSlot] = useState('');
     const [date, setDate] = useState('');
     const [payMethod, setPayMethod] = useState<'upi' | 'card' | 'wallet'>('upi');
@@ -44,8 +45,12 @@ function BookingForm() {
 
     useEffect(() => {
         if (serviceCategory) {
-            const all = localStore.providers.getAll().filter(p => p.overallStatus === 'approved' && p.skillCategories.includes(serviceCategory));
-            setProviders(all);
+            const matches = localStore.aiMatchProviders(serviceCategory);
+            setAiMatches(matches);
+            const price = localStore.getDynamicPrice(serviceCategory);
+            setPricing(price);
+            // Auto-select best match
+            if (!selectedProvider && matches.length > 0) setSelectedProvider(matches[0].provider);
         }
     }, [serviceCategory]);
 
@@ -54,18 +59,23 @@ function BookingForm() {
     const handleBook = async () => {
         if (!user || !serviceCategory || !timeSlot || !date || !address) { toast.error('Fill all required fields'); return; }
         setLoading(true);
+
+        // Fraud detection: check for excessive bookings
+        localStore.checkFraudSignals(user.id);
+
         const otp = Math.floor(1000 + Math.random() * 9000).toString();
-        const amount = serviceCategory === 'Electrician' ? 800 : serviceCategory === 'Plumber' ? 500 : serviceCategory === 'Cook' ? 2500 : serviceCategory === 'Driver' ? 600 : 400;
+        const finalAmount = pricing?.finalPrice ?? 400;
         const booking = localStore.bookings.create({
             customerId: user.id, customerName: user.name,
             providerId: selectedProvider?.id, providerName: selectedProvider?.name,
             serviceType: serviceCategory, description, timeSlot, scheduledDate: date,
             status: selectedProvider ? 'accepted' : 'pending', paymentStatus: 'held',
-            amount, otp, city: user.city || 'Indore', address,
+            amount: finalAmount, dynamicMultiplier: pricing?.multiplier,
+            otp, city: user.city || 'Indore', address,
         });
         localStore.payments.create({
             bookingId: booking.id, customerId: user.id, providerId: selectedProvider?.id,
-            amount, platformFee: Math.round(amount * 0.1), providerPayout: Math.round(amount * 0.9),
+            amount: finalAmount, platformFee: Math.round(finalAmount * 0.1), providerPayout: Math.round(finalAmount * 0.9),
             escrowStatus: 'held', payoutStatus: 'pending', paymentMethod: payMethod,
             transactionId: 'TXN' + Date.now(),
         });
@@ -81,12 +91,20 @@ function BookingForm() {
         <span key={i} style={{ color: i < Math.round(r) ? '#F59E0B' : 'var(--bg-border)', fontSize: '0.75rem' }}>★</span>
     ));
 
+    const getAIMatch = (providerId: string) => aiMatches.find(m => m.provider.id === providerId);
+
     if (bookingDone && createdBooking) {
         return (
             <div style={{ maxWidth: 480, margin: '0 auto', textAlign: 'center', padding: '40px 0' }}>
                 <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', fontSize: '2rem' }}>✅</div>
                 <h2 style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Booking Confirmed!</h2>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>Your booking ID is <strong style={{ color: 'var(--brand-primary)' }}>#{createdBooking.id.slice(-6).toUpperCase()}</strong></p>
+                {pricing?.isSurge && (
+                    <div style={{ display: 'flex', gap: 8, padding: '10px 14px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 10, marginBottom: 16, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        <Zap size={14} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
+                        Surge pricing applied: {pricing.surgeLabel} — base price was ₹{pricing.basePrice}
+                    </div>
+                )}
                 <div className="card" style={{ textAlign: 'left', marginBottom: 20 }}>
                     {[
                         ['Service', createdBooking.serviceType], ['Date', createdBooking.scheduledDate],
@@ -101,7 +119,7 @@ function BookingForm() {
                 </div>
                 <div className="escrow-banner" style={{ marginBottom: 24 }}>
                     <Shield size={16} style={{ color: 'var(--color-success)', flexShrink: 0 }} />
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Payment of ₹{createdBooking.amount} is safely held in escrow. Will be released after job completion.</div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Payment of ₹{createdBooking.amount} safely held in escrow. Released after job completion.</div>
                 </div>
                 <button className="btn btn-primary btn-full btn-lg" onClick={() => router.push(`/customer/bookings/${createdBooking.id}`)}>
                     Track Booking <ChevronRight size={16} />
@@ -130,14 +148,24 @@ function BookingForm() {
                     <div>
                         <h3 style={{ fontWeight: 700, marginBottom: 20, color: 'var(--text-primary)' }}>Select Service Category</h3>
                         <div className="grid grid-3" style={{ gap: 12, marginBottom: 24 }}>
-                            {CATEGORIES.map(cat => (
-                                <button key={cat} type="button" onClick={() => setServiceCategory(cat)} style={{
-                                    padding: '12px', borderRadius: 12, border: `2px solid ${serviceCategory === cat ? '#F59E0B' : 'var(--bg-border)'}`,
-                                    background: serviceCategory === cat ? 'rgba(245,158,11,0.1)' : 'var(--bg-surface)',
-                                    color: serviceCategory === cat ? '#F59E0B' : 'var(--text-secondary)',
-                                    fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s',
-                                }}>{cat}</button>
-                            ))}
+                            {CATEGORIES.map(cat => {
+                                const catPrice = localStore.getDynamicPrice(cat);
+                                return (
+                                    <button key={cat} type="button" onClick={() => setServiceCategory(cat)} style={{
+                                        padding: '12px', borderRadius: 12, border: `2px solid ${serviceCategory === cat ? '#F59E0B' : 'var(--bg-border)'}`,
+                                        background: serviceCategory === cat ? 'rgba(245,158,11,0.1)' : 'var(--bg-surface)',
+                                        color: serviceCategory === cat ? '#F59E0B' : 'var(--text-secondary)',
+                                        fontWeight: 600, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s',
+                                        position: 'relative',
+                                    }}>
+                                        {cat}
+                                        <div style={{ fontSize: '0.65rem', fontWeight: 400, marginTop: 3, color: serviceCategory === cat ? '#F59E0B' : 'var(--text-muted)' }}>
+                                            ₹{catPrice.finalPrice}
+                                            {catPrice.isSurge && <span style={{ color: '#EF4444', marginLeft: 4 }}>🔥</span>}
+                                        </div>
+                                    </button>
+                                );
+                            })}
                         </div>
                         <button className="btn btn-primary btn-full" disabled={!serviceCategory} onClick={() => setStep(1)}>
                             Next <ChevronRight size={16} />
@@ -145,34 +173,46 @@ function BookingForm() {
                     </div>
                 )}
 
-                {/* Step 1 – Provider */}
+                {/* Step 1 – Provider (AI Matched) */}
                 {step === 1 && (
                     <div>
                         <h3 style={{ fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>Choose a Provider</h3>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 20 }}>Or skip to auto-match</p>
-                        {providers.length === 0 ? (
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 20 }}>
+                            Providers ranked by AI score (distance + rating + response time)
+                        </p>
+                        {aiMatches.length === 0 ? (
                             <div className="empty-state" style={{ padding: '30px 0' }}>
                                 <div className="empty-icon">🔍</div>
                                 <p style={{ color: 'var(--text-muted)' }}>No approved providers for {serviceCategory} yet.</p>
                             </div>
                         ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
-                                {providers.map(p => (
-                                    <div key={p.id} onClick={() => setSelectedProvider(selectedProvider?.id === p.id ? null : p)} style={{
-                                        display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 12,
-                                        border: `2px solid ${selectedProvider?.id === p.id ? '#F59E0B' : 'var(--bg-border)'}`,
-                                        background: selectedProvider?.id === p.id ? 'rgba(245,158,11,0.06)' : 'var(--bg-surface)',
-                                        cursor: 'pointer', transition: 'all 0.15s',
+                                {aiMatches.map((match, idx) => (
+                                    <div key={match.provider.id} onClick={() => setSelectedProvider(selectedProvider?.id === match.provider.id ? null : match.provider)} style={{
+                                        display: 'flex', alignItems: 'flex-start', gap: 14, padding: '14px 16px', borderRadius: 12,
+                                        border: `2px solid ${selectedProvider?.id === match.provider.id ? '#F59E0B' : 'var(--bg-border)'}`,
+                                        background: selectedProvider?.id === match.provider.id ? 'rgba(245,158,11,0.06)' : 'var(--bg-surface)',
+                                        cursor: 'pointer', transition: 'all 0.15s', position: 'relative',
                                     }}>
-                                        <div className="avatar avatar-md">{p.name.charAt(0)}</div>
+                                        <div className="avatar avatar-md">{match.provider.name.charAt(0)}</div>
                                         <div style={{ flex: 1 }}>
-                                            <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>{p.name}</div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                                                {stars(p.rating)}
-                                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{p.rating} ({p.totalJobs} jobs)</span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                                                <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.9rem' }}>{match.provider.name}</span>
+                                                <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: idx === 0 ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.1)', color: idx === 0 ? '#10B981' : '#F59E0B' }}>
+                                                    {idx === 0 ? <><Trophy size={9} style={{ display: 'inline', marginRight: 2 }} />Best Match</> : match.matchLabel}
+                                                </span>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                                                {stars(match.provider.rating)}
+                                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{match.provider.rating} ({match.provider.totalJobs} jobs)</span>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: 12, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                                <span><MapPin size={10} style={{ display: 'inline', marginRight: 2 }} />{match.distanceKm} km away</span>
+                                                <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} />ETA ~{match.etaMinutes} min</span>
+                                                <span><Star size={10} style={{ display: 'inline', marginRight: 2 }} />Score: {(match.score * 100).toFixed(0)}</span>
                                             </div>
                                         </div>
-                                        {selectedProvider?.id === p.id && <Check size={16} style={{ color: '#F59E0B' }} />}
+                                        {selectedProvider?.id === match.provider.id && <Check size={16} style={{ color: '#F59E0B', flexShrink: 0 }} />}
                                     </div>
                                 ))}
                             </div>
@@ -230,15 +270,25 @@ function BookingForm() {
                 {step === 3 && (
                     <div>
                         <h3 style={{ fontWeight: 700, marginBottom: 20, color: 'var(--text-primary)' }}>Payment Method</h3>
+                        {/* Surge pricing banner */}
+                        {pricing?.isSurge && (
+                            <div style={{ display: 'flex', gap: 10, padding: '12px 14px', background: 'rgba(239,68,68,0.06)', border: '1.5px solid rgba(239,68,68,0.2)', borderRadius: 12, marginBottom: 16 }}>
+                                <Zap size={16} style={{ color: '#EF4444', flexShrink: 0, marginTop: 2 }} />
+                                <div style={{ fontSize: '0.82rem' }}>
+                                    <strong style={{ color: '#EF4444' }}>{pricing.surgeLabel}</strong>
+                                    <span style={{ color: 'var(--text-muted)' }}> — high demand right now. Base: ₹{pricing.basePrice} → Surge: ₹{pricing.finalPrice}</span>
+                                </div>
+                            </div>
+                        )}
                         <div className="escrow-banner" style={{ marginBottom: 20 }}>
                             <Shield size={18} style={{ color: 'var(--color-success)', flexShrink: 0 }} />
                             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                <strong style={{ color: 'var(--color-success)' }}>Escrow Protected</strong> — Your payment is held securely until the job is completed and you approve it.
+                                <strong style={{ color: 'var(--color-success)' }}>Escrow Protected</strong> — Held securely until job completion.
                             </div>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
                             {METHODS.map(m => (
-                                <div key={m.id} onClick={() => setPayMethod(m.id as any)} style={{
+                                <div key={m.id} onClick={() => setPayMethod(m.id as 'upi' | 'card' | 'wallet')} style={{
                                     display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 12,
                                     border: `2px solid ${payMethod === m.id ? '#F59E0B' : 'var(--bg-border)'}`,
                                     background: payMethod === m.id ? 'rgba(245,158,11,0.06)' : 'var(--bg-surface)',
@@ -265,13 +315,16 @@ function BookingForm() {
                     <div>
                         <h3 style={{ fontWeight: 700, marginBottom: 20, color: 'var(--text-primary)' }}>Confirm Booking</h3>
                         {[
-                            ['Service', serviceCategory], ['Provider', selectedProvider?.name || 'Auto-match'],
+                            ['Service', serviceCategory],
+                            ['Provider', selectedProvider?.name || 'Auto-match (AI)'],
                             ['Date', date], ['Time', timeSlot], ['Address', address],
-                            ['Payment', payMethod.toUpperCase()], ['Estimated Cost', serviceCategory === 'Electrician' ? '₹800' : serviceCategory === 'Plumber' ? '₹500' : serviceCategory === 'Cook' ? '₹2,500' : serviceCategory === 'Driver' ? '₹600' : '₹400'],
+                            ['Payment', payMethod.toUpperCase()],
+                            ['Base Price', `₹${pricing?.basePrice || '-'}`],
+                            ['Final Price', `₹${pricing?.finalPrice || '-'}${pricing?.isSurge ? ` (${pricing.surgeLabel})` : ''}`],
                         ].map(([k, v]) => (
                             <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--bg-border)', fontSize: '0.875rem' }}>
                                 <span style={{ color: 'var(--text-muted)' }}>{k}</span>
-                                <span style={{ fontWeight: 600, color: 'var(--text-primary)', maxWidth: '60%', textAlign: 'right' }}>{v}</span>
+                                <span style={{ fontWeight: 600, color: k === 'Final Price' && pricing?.isSurge ? '#EF4444' : 'var(--text-primary)', maxWidth: '60%', textAlign: 'right' }}>{v}</span>
                             </div>
                         ))}
                         <div style={{ display: 'flex', gap: 8, marginTop: 24 }}>
@@ -290,13 +343,8 @@ function BookingForm() {
 export default function BookPage() {
     const { user, loading } = useAuth();
     const router = useRouter();
-
-    useEffect(() => {
-        if (!loading && (!user || user.role !== 'customer')) router.push('/login');
-    }, [user, loading, router]);
-
+    useEffect(() => { if (!loading && (!user || user.role !== 'customer')) router.push('/login'); }, [user, loading, router]);
     if (loading || !user) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}><div className="spinner spinner-lg" /></div>;
-
     return (
         <div className="layout-with-sidebar">
             <Sidebar role="customer" />
@@ -304,7 +352,7 @@ export default function BookPage() {
                 <div className="content-area">
                     <div style={{ marginBottom: 32 }}>
                         <h1 className="font-display" style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--text-primary)' }}>Book a Service</h1>
-                        <p style={{ color: 'var(--text-secondary)', marginTop: 4 }}>Complete the steps below to book a verified professional</p>
+                        <p style={{ color: 'var(--text-secondary)', marginTop: 4 }}>AI-powered provider matching with dynamic pricing</p>
                     </div>
                     <Suspense fallback={<div className="spinner" />}>
                         <BookingForm />

@@ -3,7 +3,7 @@ import { useState, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { User, Wrench, ChevronRight, ChevronLeft, Check, Upload, Image, Video, Shield, AlertCircle } from 'lucide-react';
+import { User, Wrench, ChevronRight, ChevronLeft, Check, Upload, Image, Video, Shield, AlertCircle, Eye, EyeOff, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { localStore } from '@/lib/localStore';
 import BrandLogo from '@/components/brand/BrandLogo';
@@ -61,6 +61,10 @@ export default function SignupPage() {
     const [name, setName] = useState('');
     const [phone, setPhone] = useState('');
     const [email, setEmail] = useState('');
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [showPwd, setShowPwd] = useState(false);
     const [city, setCity] = useState('Indore');
     const [address, setAddress] = useState('');
 
@@ -180,8 +184,12 @@ export default function SignupPage() {
         e.preventDefault();
         if (!otpVerified) { toast.error('Please verify your phone first'); return; }
         if (!name.trim()) { toast.error('Enter your name'); return; }
+        if (!username.trim()) { toast.error('Enter a username'); return; }
+        if (!password) { toast.error('Create a password'); return; }
+        if (password !== confirmPassword) { toast.error('Passwords do not match'); return; }
+        if (password.length < 6) { toast.error('Password must be at least 6 characters'); return; }
         setLoading(true);
-        const res = await signup({ name, phone, email: email || undefined, role: 'customer', city, address, password: '' });
+        const res = await signup({ name, phone, email: email || undefined, username: username.trim(), role: 'customer', city, address, password });
         setLoading(false);
         if (!res.success) { toast.error(res.error!); return; }
         toast.success('Account created! Welcome to QAVRA 🎉');
@@ -293,6 +301,31 @@ export default function SignupPage() {
                             <div className="input-group">
                                 <label className="input-label">Email (optional)</label>
                                 <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" />
+                            </div>
+                            <div className="input-group">
+                                <label className="input-label">Username *</label>
+                                <div style={{ position: 'relative' }}>
+                                    <KeyRound size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                                    <input className="input" style={{ paddingLeft: 38 }} value={username} onChange={e => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))} placeholder="e.g. rahul_123" maxLength={20} />
+                                </div>
+                                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>4–20 chars, letters/numbers/underscores only</span>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                <div className="input-group">
+                                    <label className="input-label">Password *</label>
+                                    <div style={{ position: 'relative' }}>
+                                        <input className="input" style={{ paddingRight: 36 }} type={showPwd ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Min 6 chars" autoComplete="new-password" />
+                                        <button type="button" onClick={() => setShowPwd(p => !p)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                                            {showPwd ? <EyeOff size={14} /> : <Eye size={14} />}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="input-group">
+                                    <label className="input-label">Confirm Password *</label>
+                                    <input className="input" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Re-enter password"
+                                        style={{ border: confirmPassword && confirmPassword !== password ? '1.5px solid #EF4444' : undefined }} autoComplete="new-password" />
+                                    {confirmPassword && confirmPassword !== password && <span style={{ fontSize: '0.7rem', color: '#EF4444' }}>Passwords don&apos;t match</span>}
+                                </div>
                             </div>
                             <div className="input-group">
                                 <label className="input-label">City</label>
